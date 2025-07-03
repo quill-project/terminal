@@ -1,0 +1,13 @@
+
+mod terminal::io
+
+pub ext fun print(text: String) = "
+    quill_print(#var(text));
+"
+
+pub ext fun eprint(text: String) = "
+    quill_print(#var(text));
+"
+
+// TODO?
+// pub ext fun inputln() -> String
