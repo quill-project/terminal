@@ -1,13 +1,100 @@
 
 mod terminal::io
 
+/// Writes the given text to stdout, NOT followed by a new line.
 pub ext fun print(text: String) = "
     quill_print(#var(text));
 "
 
+/// Writes the given text to stderr, NOT followed by a new line.
 pub ext fun eprint(text: String) = "
     quill_print(#var(text));
 "
 
-// TODO?
-// pub ext fun inputln() -> String
+fun make_some[T](value: T) -> Option[T] = Option::Some(value)
+fun make_none[T]() -> Option[T] = Option::None
+
+/// Internal function that reads a single UTF-8 codepoint (1-4 bytes) from 
+/// the standard input. If the standard input contains no data, this function 
+/// will make the calling thread wait until data is available.
+ext fun inputc() -> Option[String] = "
+    #include(<stdio.h>)
+    int start = fgetc(stdin);
+    if(start == EOF) { 
+        return #fun(make_none[String])(); 
+    }
+    quill_string_t res;
+    res.length_bytes = quill_point_decode_length((uint8_t) start);
+    res.length_points = 1;
+    res.alloc = quill_malloc(res.length_bytes, NULL);
+    res.data = res.alloc->data;
+    res.alloc->data[0] = (uint8_t) start;
+    for(quill_int_t i = 1; i < res.length_bytes; i += 1) {
+        int c = fgetc(stdin);
+        if(c == EOF) {
+            #rc_dec(String)(res);
+            return #fun(make_none[String])();
+        }
+        res.alloc->data[i] = (uint8_t) c;
+    }
+    return #fun(make_some[String])(res);
+"
+
+/// Returns a sequence of UTF-8 characters that represents stdin.
+/// Calling this function multiple times will result in the same sequence,
+/// since each of the sequences will immediately pull from stdin if asked
+/// for the next character.
+/// The returned sequence will end once stdin signals EOF.
+/// If the standard input contains no data, requesting a next character from
+/// the returned sequence will cause the calling thread to wait until data
+/// is available.
+pub fun input() -> mut Sequence[String]
+    = Sequence::new(inputc)
+
+/// Reads all data in the standard input up to the next '\n', '\r\n' or until
+/// the standard input signals EOF.
+/// If the standard input is empty or does not contain a line terminator,
+/// this function will make the calling thread wait until enough data is
+/// available.
+/// The line terminator is not included in the returned string.
+/// '\r' on its own does not count as a line terminator and will be included
+/// in the returned string.
+pub fun inputln() -> String {
+    val output = StringBuilder::empty()
+    val deferred = StringBuilder::empty()
+    for c: input() {
+        if c == "\n" { 
+            deferred |> clear()
+            break
+        }
+        if c == "\r" {
+            deferred |> push(c)
+            continue
+        }
+        output |> push(deferred |> as_string())
+        output |> push(c)
+        deferred |> clear()
+    }
+    output |> push(deferred |> as_string())
+    return output |> as_string()
+}
+
+/// Reads 'n' BYTES from the standard input and returns them as a UTF-8 string.
+/// If the standard input does not contain 'n' characters the calling function
+/// is made to wait until enough data is available.
+/// If the standard input signals EOF before 'n' characters were read all
+/// read data up to that point is returned instead.
+pub ext fun inputnb(n: Int) -> String = "
+    #include(<stdio.h>)
+    quill_string_t res;
+    res.length_bytes = #var(n);
+    res.length_points = 0;
+    res.alloc = quill_malloc(#var(n), NULL);
+    res.data = res.alloc->data;
+    size_t read_bytes = fread(res.alloc->data, sizeof(uint8_t), #var(n), stdin);
+    res.length_bytes = read_bytes;
+    for(quill_int_t o = 0; o < res.length_bytes; res.length_points += 1) {
+        o += quill_point_decode_length(res.data[o]);
+    } 
+    return res;
+"
